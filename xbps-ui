@@ -1,0 +1,311 @@
+#!/bin/sh
+export TMP_FILE="/tmp/xbps-ui_cache"
+echo "time=$(date +%s)" > "${TMP_FILE}"
+
+# check for required packages
+for i in fzf xi xrs xe; do
+    if [ ! -x "$(command -v ${i})" ]; then
+        echo "install required packages (fzf, xtools, xe)"
+        exit 1
+    fi
+done
+
+case $(id -u) in
+0)
+    DO_AS_ROOT=''
+    ;;
+1000)
+    for i in doas sudo; do
+        if [ -x "$(command -v ${i})" ]; then
+            DO_AS_ROOT=${i}
+            break
+        else
+            DO_AS_ROOT='su -c'
+        fi
+    done
+    ;;
+esac
+
+while getopts "yfh" opt; do
+    case "${opt}" in
+    y) xbps_args="${xbps_args} -y";;
+    f) xbps_args="${xbps_args} -f";;
+    esac
+done
+
+update() {
+    # to update the system
+    . "${TMP_FILE}"
+    if [ -n "${up}" ]; then
+        $DO_AS_ROOT xi -Su ${xbps_args}
+    else
+        echo "Nothing to do"; sleep 1
+        return 1
+    fi
+}
+
+install() {
+    # declaration of local variables 
+    local pkg argument_input    
+    
+    # selecting of packages to install
+    # flags multi to be able to pick multiple packages
+    # exact to match exact match
+    # no sort self explanatory
+    # cycle to enable cycle scroll
+    # reverse to set orientation to reverse
+    # margin for margins
+    # inline info to display info inline
+    # preview to show the package description 
+    # header and prompt to give info for people to know how to do stuff
+    pkg="$(xrs '' | grep -v \* | sed 's/\[-\] //g' |
+        fzf -i \
+        --multi \
+        --exact \
+        --no-sort \
+        --select-1 \
+        --query="${argument_input}" \
+        --cycle \
+        --reverse \
+        --margin="4%,1%,1%,2%" \
+        --preview 'echo {1}; echo ; xbps-query -R {1} '\
+        --preview-window=right:55%:wrap \
+        --header="TAB key to (un)select. ENTER to install. ESC to quit." \
+        --prompt="filter> " | awk '{print $1}' 
+    )"
+
+    pkg="$(echo "${pkg}" | paste -sd ' ')"
+    if [ -n "${pkg}" ]; then 
+        clear
+        $DO_AS_ROOT xbps-install -S ${xbps_args} ${pkg}
+    else
+        return 1
+    fi
+}
+
+remove() {
+    local pkg argument_input
+    pkg="$(xbps-query -l | sed 's/ii //g' | 
+        fzf -i \
+        --multi \
+        --exact \
+        --no-sort \
+        --select-1 \
+        --query="${argument_input}" \
+        --cycle \
+        --reverse \
+        --margin="4%,1%,1%,2%" \
+        --inline-info \
+        --preview 'echo {1}; echo; xbps-query -S {1} | grep -v "state: installed"' \
+        --preview-window=right:55%:wrap \
+        --header="TAB key to (un)select. ENTER to remove. ESC to quit." \
+        --prompt="filter> " | awk '{print $1}'
+    )"
+
+    pkg="$(echo "${pkg}" | paste -sd ' ')"
+    if [ -n "${pkg}" ]; then 
+        clear
+        $DO_AS_ROOT xbps-remove -R ${xbps_args} ${pkg}
+    else
+        return 1
+    fi
+}
+
+unhold() {
+    local pkg argument_input    
+    pkg="$(xbps-query -H |
+        fzf -i \
+        --multi \
+        --exact \
+        --no-sort \
+        --select-1 \
+        --query="${argument_input}" \
+        --cycle \
+        --reverse \
+        --margin="4%,1%,1%,2%" \
+        --inline-info \
+        --preview 'echo {1}; echo ; xbps-query -S {1} '\
+        --preview-window=right:55%:wrap \
+        --header="TAB key to (un)select. ENTER to unhold. ESC to quit." \
+        --prompt="filter> " | awk '{print $1}'
+    )"
+            
+    pkg="$(echo "${pkg}" | paste -sd ' '| tr -d :)"
+    if [ -n "${pkg}" ]; then 
+        clear
+        $DO_AS_ROOT xbps-pkgdb -m unhold ${pkg}
+    else
+        return 1
+    fi
+}
+
+hold() {
+    local pkg list argument_input    
+    list="$(xbps-query -l | awk '{ print $2 }' | xe xbps-uhelper getpkgname)"
+    pkg="$(echo "${list}" | grep -Ev \
+        "$(xbps-query -H | xe xbps-uhelper getpkgname | paste -sd "|")" |
+        fzf -i \
+        --multi \
+        --exact \
+        --no-sort \
+        --select-1 \
+        --query="${argument_input}" \
+        --cycle \
+        --reverse \
+        --margin="4%,1%,1%,2%" \
+        --inline-info \
+        --preview 'echo {1}; echo ; xbps-query -S {1} '\
+        --preview-window=right:55%:wrap \
+        --header="TAB key to (un)select. ENTER to place on hold. ESC to quit." \
+        --prompt="filter> " | awk '{print $2}'
+    )"
+            
+    pkg="$(echo "${pkg}" | paste -sd ' ')"
+    if [ -n "${pkg}" ]; then 
+         clear
+         $DO_AS_ROOT xbps-pkgdb -m hold ${pkg}
+    else
+        return 1
+    fi
+}
+
+maintain() {
+    $DO_AS_ROOT xbps-remove -Oo ${xbps_args}
+}
+
+kernels() {
+    local pkg argument_input
+    pkg="$(vkpurge list |
+        fzf -i \
+        --multi \
+        --exact \
+        --no-sort \
+        --select-1 \
+        --query="${argument_input}" \
+        --cycle \
+        --reverse \
+        --margin="4%,1%,1%,2%" \
+        --inline-info \
+        --header="TAB key to (un)select. ENTER to unhold. ESC to quit." \
+        --prompt="filter> " | awk '{print $1}'
+    )"
+
+    pkg="$(echo "${pkg}" | paste -sd ' '| tr -d :)"
+    if [ -n "${pkg}" ]; then
+        clear
+        $DO_AS_ROOT vkpurge rm ${pkg}
+    else
+        return 1
+    fi
+}
+
+menu() {
+    echo "1: Update system\n2: Install package(s)\n3: Remove package(s)\n4: Hold package(s)\n5: Unhold package(s)\n6: Clear orphans and cache\n7: Remove kernel(s)\n8: Quit"
+}
+
+while true; do
+    clear
+    choice="$(menu |
+        fzf \
+        --reverse \
+        --no-sort \
+        --cycle \
+        --margin="4%,1%,1%,2%" \
+        --preview '
+            while true; do
+                if [ "$(grep -Eoc "up=|pkgs=|rpkgs=|hold=|orphan=|kernels=" "${TMP_FILE}" 2>/dev/null)" != "6" ]; then
+                    for i in "up=" "pkgs=" "rpkgs=" "hold=" "orphan=" "kernels="; do
+                        if ! grep -Eo "${i}" "${TMP_FILE}" &>/dev/null; then
+                            case "${i}" in
+                            up=) echo "up=\"$(xbps-install -Mun | grep -v hold | cut -f1 -d" " | tr "\n" " ")\"" >> "${TMP_FILE}";;
+                            pkgs=) echo "pkgs=\"$(xrs "" | grep -vc "*")\""  >> "${TMP_FILE}";;
+                            rpkgs=) echo "rpkgs=\"$(xbps-query -l | wc -l)\"" >> "${TMP_FILE}";;
+                            hold=) echo "hold=\"$(xbps-query -H | tr "\n" " ")\"" >> "${TMP_FILE}";;
+                            orphan=) echo "orphan=\"$(xbps-remove -no | wc -l)\"" >> "${TMP_FILE}";;
+                            kernels=) echo "kernels=\"$(du -hs /boot/ 2>/dev/null)\"" >> "${TMP_FILE}";;
+                            esac
+                        fi
+                    done
+                else
+                    . "${TMP_FILE}"
+                    if [ $(($(date +%s-$time))) -ge 120 ]; then
+                        echo "time=$(date +%s)" > "${TMP_FILE}"
+                    else
+                        break
+                    fi
+                fi
+            done
+
+            case {1} in
+            1:) if [ -z "${up}" ]; then
+                    echo "Up to date"
+                else
+                    echo "Available update(s):"
+                    echo "${up}" | tr " " "\n"
+                fi
+                ;;
+            2:) echo "${pkgs} package(s) available to install";;
+            3:) echo "${rpkgs} package(s) installed";;
+            4:) ;;
+            5:) echo "${hold}" | tr " " "\n";;
+            6:) echo "Clear cache entries and ${orphan} orphan(s)";;
+            7:) echo "Space used ${kernels}";;
+            8:) ;;
+            esac' \
+        --preview-window=right:65%:wrap \
+        --header="ENTER to choose. ESC to quit." \
+        --prompt="filter> "| cut -f1 -d:
+    )"
+
+    case $choice in
+    1) if update; then
+           echo "System updated. To return to xbpsUI press ENTER"
+           # remove cache entries related to this action
+           sed -e '/up=/d' -e '/pkgs=/d' -e '/rpkgs=/d' -i "${TMP_FILE}"
+           # wait for input, e.g. by pressing ENTER:, _ is useless
+           read _
+       fi
+       ;;
+    2) if install; then
+           echo "Package(s) installation finished. To return to xbpsUI press ENTER"
+           sed -e '/hold=/d' -e '/pkgs=/d' -e '/rpkgs=/d' -i "${TMP_FILE}"
+           read _
+       fi
+       ;;
+    3) if remove; then
+           echo "Package(s) purged. To return to xbpsUI press ENTER"
+           sed -e '/up=/d'  -e '/pkgs=/d' -e '/rpkgs=/d' -i "${TMP_FILE}"
+           read _
+       fi
+       ;;
+    4) if hold; then
+           echo "Package(s) held. To return to xbpsUI press ENTER"
+           sed -e '/up=/d' -e '/hold=/d' -i "${TMP_FILE}"
+           read _
+       fi
+       ;;
+    5) if unhold; then
+           echo "Package(s) unheld. To return to xbpsUI press ENTER"
+           sed -e '/up=/d' -e '/hold=/d' -i "${TMP_FILE}"
+           read _
+       fi
+       ;;
+    6) if maintain; then
+           echo "Orphans and cache cleared. To return to xbpsUI press ENTER"
+           sed -e '/up=/d' -e '/pkgs=/d' -e '/rpkgs=/d' -e '/orphan=/d' -i "${TMP_FILE}"
+           read _
+       fi
+       ;;
+    7) if kernels; then
+           echo "Kernel(s) removed. To return to xbpsUI press ENTER"
+           sed -e '/kernels=/d' -i "${TMP_FILE}"
+           read _
+       fi
+       ;;
+    8|q|quit|*)
+        clear
+        exit
+        ;;
+    esac   
+done
+    

@@ -1,0 +1,26 @@
+#!/bin/sh
+[ ! -d "$1" ] && { printf "%s\n" "nonexistent mountpoint"; exit; }
+
+names="$(mtp-detect 2>/dev/null | grep Model: | sed 's/.*Model: //g')"
+
+opt="$(echo "${names:-"-- no devices --\n"}unmount\nexit" |
+	fzf -i --header='choose device' \
+	--reverse \
+	--cycle \
+	--select-1 \
+	--margin="4%,1%,1%,2%")"
+
+[ -z "${opt}" ] && exit 1
+
+case "${opt}" in
+unmount)
+	fusermount -u "${1}";;
+exit)
+	exit 0;;
+'-- no devices --')
+	exit 0;;
+*)
+	go-mtpfs --device "${opt}" "${1}";;
+esac
+
+
